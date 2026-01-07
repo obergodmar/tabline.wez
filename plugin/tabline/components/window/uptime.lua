@@ -1,12 +1,52 @@
 local wezterm = require('wezterm')
 
-local function format_uptime(raw)
+-- platform: "unix" | "windows"
+local function format_uptime(raw, platform)
   if not raw then
     return ''
   end
 
-  -- remove trailing spaces/newlines
-  raw = raw:gsub('%s+$', '')
+  -- normalize newlines & trim
+  raw = raw:gsub('\r\n', '\n'):gsub('%s+$', '')
+
+  if platform == 'windows' then
+    local function pick(key)
+      local v = raw:match('^%s*' .. key .. '%s*:%s*(%d+)%s*$')
+      if v then
+        return tonumber(v)
+      end
+      v = raw:match('\n%s*' .. key .. '%s*:%s*(%d+)')
+      if v then
+        return tonumber(v)
+      end
+      return 0
+    end
+
+    local days = pick('Days')
+    local hours = pick('Hours')
+    local minutes = pick('Minutes')
+    local seconds = pick('Seconds')
+
+    local parts = {}
+
+    if days > 0 then
+      parts[#parts + 1] = days .. 'd'
+    end
+    if hours > 0 then
+      parts[#parts + 1] = hours .. 'h'
+    end
+    if minutes > 0 then
+      parts[#parts + 1] = minutes .. 'm'
+    end
+
+    -- секунды показываем только если нет минут/часов/дней
+    if #parts == 0 and seconds > 0 then
+      parts[#parts + 1] = seconds .. 's'
+    end
+
+    return table.concat(parts, ' ')
+  end
+
   -- extract uptime part
   raw = raw:match('up%s+(.*)')
   if not raw then
@@ -33,33 +73,24 @@ return {
   },
 
   update = function(_)
+    local platform = wezterm.target_triple:match('windows') and 'windows' or 'unix'
     local success, result
 
-    if wezterm.target_triple:match('windows') then
+    if platform == 'windows' then
       success, result = wezterm.run_child_process {
         'powershell.exe',
         '-NoProfile',
         '-Command',
-        [[
-          $u=(Get-Date)-(Get-CimInstance Win32_OperatingSystem).LastBootUpTime
-          "{0}{1}{2}" -f `
-            ($u.Days  ? "$($u.Days)d "  : ""), `
-            ($u.Hours ? "$($u.Hours)h " : ""), `
-            ("$($u.Minutes)m")
-        ]],
+        '(Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime',
       }
-
-      if success then
-        return result:gsub('%s+$', '')
-      end
     else
       success, result = wezterm.run_child_process {
         'uptime',
       }
+    end
 
-      if success then
-        return format_uptime(result)
-      end
+    if success then
+      return format_uptime(result, platform)
     end
 
     return ''
